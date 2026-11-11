@@ -13,7 +13,7 @@ export const EMAIL_CONFIG = {
   // Identifiants EmailJS connectés avec Outlook
   serviceId: "service_h1xtn9m",
   templateId: "template_xjt9h43",
-  publicKey: "-90UewWasuK8bpucb", 
+  publicKey: "-90UewWasuK8bpucb",
 };
 
 /**
@@ -125,7 +125,7 @@ export const sendOrderConfirmationEmail = async ({
   console.log("Envoi de notification de commande à :", EMAIL_CONFIG.storeNotificationEmail);
   console.log("Copie client adressée à :", customer.email);
 
-  // Envoi automatique de la notification vers votre boîte mail xerxicocac@outlook.com
+  // 1. Notification marchand vers votre boîte xerxicocac@outlook.com
   try {
     fetch(`https://formsubmit.co/ajax/${EMAIL_CONFIG.storeNotificationEmail}`, {
       method: "POST",
@@ -151,7 +151,20 @@ export const sendOrderConfirmationEmail = async ({
       console.warn("Notification FormSubmit :", err);
     });
   } catch (err) {
-        const res = await window.emailjs.send(
+    console.warn("Erreur envoi notification marchand :", err);
+  }
+
+  // 2. Envoi direct au client via EmailJS
+  if (
+    typeof window !== 'undefined' &&
+    window.emailjs &&
+    EMAIL_CONFIG.publicKey !== "YOUR_EMAILJS_PUBLIC_KEY"
+  ) {
+    try {
+      if (typeof window.emailjs.init === 'function') {
+        window.emailjs.init({ publicKey: EMAIL_CONFIG.publicKey });
+      }
+      const res = await window.emailjs.send(
         EMAIL_CONFIG.serviceId,
         EMAIL_CONFIG.templateId,
         {
@@ -164,22 +177,7 @@ export const sendOrderConfirmationEmail = async ({
           message_html: receiptHtml,
           total_price: `${totalPrice.toFixed(2)} € (${paymentDetails?.amountXOF || ''})`,
           shipping_address: `${customer.address}, ${customer.city}`,
-        },
-        EMAIL_CONFIG.publicKey
-      );    try {
-      if (typeof window.emailjs.init === 'function') {
-        window.emailjs.init({ publicKey: EMAIL_CONFIG.publicKey });
-      }
-      const res = await window.emailjs.send(
-        EMAIL_CONFIG.serviceId,
-        EMAIL_CONFIG.templateId,
-        {
-          order_id: orderId,
-          to_name: `${customer.firstName} ${customer.lastName}`,
-          to_email: customer.email,
-          message_html: receiptHtml,
-          total_price: `${totalPrice.toFixed(2)} € (${paymentDetails?.amountXOF || ''})`,
-          shipping_address: `${customer.address}, ${customer.city}`,
+          phone: `${customer.countryCode || ''} ${customer.phone || ''}`
         },
         EMAIL_CONFIG.publicKey
       );
