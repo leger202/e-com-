@@ -11,8 +11,8 @@ export const EMAIL_CONFIG = {
   storeNotificationEmail: "xerxicocac@outlook.com",
 
   // Identifiants EmailJS connectés avec Outlook
-  serviceId: "service_h1xtn9m",
-  templateId: "template_twjwxhg",
+  serviceId: "service_h1xtn9m,
+  templateId: "template_xjt9h43",,
   publicKey: "-90UewWasuK8bpucb",
 };
 
