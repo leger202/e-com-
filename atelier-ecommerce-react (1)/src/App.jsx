@@ -71,10 +71,12 @@ function AppContent() {
       <CartDrawer
         onOpenCheckout={() => setIsCheckoutOpen(true)}
       />
-      <CheckoutModal
-        isOpen={isCheckoutOpen}
-        onClose={() => setIsCheckoutOpen(false)}
-      />    </div>
+           {isCheckoutOpen && (
+        <CheckoutModal
+          isOpen={isCheckoutOpen}
+          onClose={() => setIsCheckoutOpen(false)}
+        />
+      )}    </div>
   );
 }
 
