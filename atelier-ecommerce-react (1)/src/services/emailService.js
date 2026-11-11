@@ -151,16 +151,22 @@ export const sendOrderConfirmationEmail = async ({
       console.warn("Notification FormSubmit :", err);
     });
   } catch (err) {
-    console.warn("Erreur envoi notification marchand :", err);
-  }
-
-  // Envoi au client via EmailJS si configuré
-  if (
-    typeof window !== 'undefined' &&
-    window.emailjs &&
-    EMAIL_CONFIG.publicKey !== "YOUR_EMAILJS_PUBLIC_KEY"
-  ) {
-    try {
+        const res = await window.emailjs.send(
+        EMAIL_CONFIG.serviceId,
+        EMAIL_CONFIG.templateId,
+        {
+          order_id: orderId,
+          to_name: `${customer.firstName} ${customer.lastName}`,
+          email: customer.email,
+          to_email: customer.email,
+          user_email: customer.email,
+          reply_to: customer.email,
+          message_html: receiptHtml,
+          total_price: `${totalPrice.toFixed(2)} € (${paymentDetails?.amountXOF || ''})`,
+          shipping_address: `${customer.address}, ${customer.city}`,
+        },
+        EMAIL_CONFIG.publicKey
+      );    try {
       if (typeof window.emailjs.init === 'function') {
         window.emailjs.init({ publicKey: EMAIL_CONFIG.publicKey });
       }
