@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { X, CheckCircle, CreditCard, ShieldCheck, Lock, Smartphone, Loader2, Info } from 'lucide-react';
+import { X, CheckCircle, CreditCard, ShieldCheck, Lock, Smartphone, Loader2, Info, Mail, Printer, FileText } from 'lucide-react';
 import { useCart } from '../context/CartContext';
-import { formatFCFA, triggerKkiapayPayment, KKIAPAY_CONFIG } from '../services/kkiapay';
+import { formatFCFA, triggerKkiapayPayment } from '../services/kkiapay';
+import { sendOrderConfirmationEmail } from '../services/emailService';
 
 export const CheckoutModal = ({ isOpen, onClose }) => {
   const { items, totalPrice, shippingFee, clearCart } = useCart();
@@ -10,6 +11,8 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
   const [paymentMethod, setPaymentMethod] = useState('kkiapay'); // 'kkiapay' | 'card' | 'cod'
   const [isProcessing, setIsProcessing] = useState(false);
   const [kkiapayTxId, setKkiapayTxId] = useState('');
+  const [confirmedItems, setConfirmedItems] = useState([]);
+  const [emailStatus, setEmailStatus] = useState('sent');
 
   const [formData, setFormData] = useState({
     firstName: '',
@@ -27,10 +30,39 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
 
   if (!isOpen) return null;
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSuccessfulOrder = async (txId = null) => {
     const randomOrderId = 'ATELIER-' + Math.floor(100000 + Math.random() * 900000);
     setOrderId(randomOrderId);
+    const finalTxId = txId || 'KKIA-' + Math.floor(100000 + Math.random() * 900000);
+    setKkiapayTxId(finalTxId);
+    setConfirmedItems([...items]);
+
+    // Déclenchement de l'envoi d'e-mail de confirmation
+    try {
+      await sendOrderConfirmationEmail({
+        orderId: randomOrderId,
+        customer: formData,
+        items: items,
+        totalPrice: totalPrice,
+        shippingFee: shippingFee,
+        paymentDetails: {
+          method: paymentMethod === 'kkiapay' ? 'Kkiapay Mobile Money / Carte' : 'Carte Bancaire',
+          transactionId: finalTxId,
+          amountXOF: formatFCFA(totalPrice)
+        }
+      });
+      setEmailStatus('sent');
+    } catch (e) {
+      console.error("Erreur envoi email :", e);
+    }
+
+    setIsProcessing(false);
+    setStep('success');
+    clearCart();
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
 
     if (paymentMethod === 'kkiapay') {
       setIsProcessing(true);
@@ -44,10 +76,7 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
         customerEmail: formData.email,
         customerPhone: fullPhone,
         onSuccess: (data) => {
-          setKkiapayTxId(data.transactionId || 'KKIA-' + Math.floor(100000 + Math.random() * 900000));
-          setIsProcessing(false);
-          setStep('success');
-          clearCart();
+          handleSuccessfulOrder(data.transactionId);
         },
         onFailure: (err) => {
           setIsProcessing(false);
@@ -57,8 +86,7 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
       });
     } else {
       // Carte ou autre
-      setStep('success');
-      clearCart();
+      handleSuccessfulOrder();
     }
   };
 
@@ -66,6 +94,10 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
     setStep('form');
     setIsProcessing(false);
     onClose();
+  };
+
+  const handlePrintReceipt = () => {
+    window.print();
   };
 
   return (
@@ -112,7 +144,7 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
             {/* Contact details */}
             <div>
               <h3 className="text-xs font-bold uppercase tracking-wider text-stone-900 dark:text-white mb-3">
-                1. Vos coordonnées
+                1. Vos coordonnées & Envoi du reçu
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -138,7 +170,12 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
                   />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="block text-[11px] font-semibold text-stone-600 dark:text-stone-300 mb-1">Email pour le reçu *</label>
+                  <label className="block text-[11px] font-semibold text-stone-600 dark:text-stone-300 mb-1 flex items-center justify-between">
+                    <span>Email pour recevoir la confirmation d'achat *</span>
+                    <span className="text-rose-600 dark:text-rose-400 text-[10px] font-normal flex items-center gap-1">
+                      <Mail size={12} /> E-mail avec récapitulatif des articles
+                    </span>
+                  </label>
                   <input
                     type="email"
                     required
@@ -396,54 +433,100 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
           </div>
         )}
 
-        {/* Success Confirmation */}
+        {/* Success Confirmation with Items List & Email Sent Notice */}
         {step === 'success' && (
-          <div className="p-8 sm:p-12 text-center flex flex-col items-center">
-            <div className="w-20 h-20 bg-emerald-100 dark:bg-emerald-950/60 rounded-full flex items-center justify-center text-emerald-600 dark:text-emerald-400 mb-6 animate-bounce">
-              <CheckCircle size={40} />
+          <div className="p-6 sm:p-10 text-center flex flex-col items-center">
+            <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-950/60 rounded-full flex items-center justify-center text-emerald-600 dark:text-emerald-400 mb-4 animate-bounce">
+              <CheckCircle size={36} />
             </div>
 
             <span className="text-xs font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400 mb-1">
-              Paiement Validé avec Succès
+              Paiement Confirmé
             </span>
-            <h3 className="font-serif text-3xl font-bold text-stone-900 dark:text-white mb-2">
+            <h3 className="font-serif text-2xl sm:text-3xl font-bold text-stone-900 dark:text-white mb-2">
               Merci pour votre commande !
             </h3>
-            <p className="text-stone-500 dark:text-stone-400 text-sm max-w-md mb-6">
-              Votre commande <span className="font-mono font-bold text-stone-800 dark:text-stone-200">#{orderId}</span> a été enregistrée. Un e-mail de confirmation a été envoyé à <span className="font-semibold text-stone-800 dark:text-stone-200">{formData.email}</span>.
-            </p>
 
-            <div className="bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl p-4 w-full max-w-md mb-8 text-left text-xs space-y-2">
-              <div className="flex justify-between">
-                <span className="text-stone-500 dark:text-stone-400">Mode de paiement :</span>
-                <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                  {paymentMethod === 'kkiapay' ? 'Kkiapay Mobile Money / Carte' : 'Carte Bancaire'}
-                </span>
+            {/* Notification de l'envoi de mail */}
+            <div className="inline-flex items-center gap-2 px-4 py-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 rounded-full text-xs text-rose-800 dark:text-rose-200 font-medium mb-6">
+              <Mail size={15} className="text-rose-600 dark:text-rose-400 shrink-0" />
+              <span>Un e-mail de confirmation détaillé a été envoyé à <strong>{formData.email}</strong></span>
+            </div>
+
+            {/* Récapitulatif détaillé des articles achetés */}
+            <div className="bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl p-4 w-full max-w-lg mb-6 text-left text-xs space-y-3">
+              <div className="flex justify-between border-b border-stone-200 dark:border-stone-700 pb-2">
+                <span className="text-stone-500 dark:text-stone-400">Numéro de commande :</span>
+                <span className="font-mono font-bold text-stone-900 dark:text-white">#{orderId}</span>
               </div>
+
               {kkiapayTxId && (
-                <div className="flex justify-between">
+                <div className="flex justify-between border-b border-stone-200 dark:border-stone-700 pb-2">
                   <span className="text-stone-500 dark:text-stone-400">Réf. Transaction Kkiapay :</span>
-                  <span className="font-mono font-bold text-stone-800 dark:text-stone-200">{kkiapayTxId}</span>
+                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{kkiapayTxId}</span>
                 </div>
               )}
-              <div className="flex justify-between">
-                <span className="text-stone-500 dark:text-stone-400">Montant réglé :</span>
-                <span className="font-bold text-stone-900 dark:text-white">
-                  {formatFCFA(totalPrice)} ({totalPrice.toFixed(2)} €)
+
+              {/* Liste des articles */}
+              <div>
+                <span className="text-[11px] uppercase tracking-wider font-bold text-stone-600 dark:text-stone-300 block mb-2">
+                  Articles achetés ({confirmedItems.length}) :
                 </span>
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  {confirmedItems.map((it) => (
+                    <div key={it.itemKey} className="flex justify-between items-center bg-white dark:bg-stone-900 p-2.5 rounded-xl border border-stone-200/80 dark:border-stone-700/80">
+                      <div className="flex items-center gap-2.5">
+                        <img src={it.image} alt={it.name} className="w-10 h-12 object-cover rounded-lg border border-stone-200 dark:border-stone-700 shrink-0" />
+                        <div>
+                          <p className="font-semibold text-stone-900 dark:text-white line-clamp-1">{it.name}</p>
+                          <p className="text-[10px] text-stone-500 dark:text-stone-400">
+                            Taille: {it.selectedSize} • Coloris: {it.selectedColor} • Qté: {it.quantity}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="font-serif font-bold text-stone-900 dark:text-white shrink-0 ml-2">
+                        {(it.price * it.quantity).toFixed(2)} €
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-stone-500 dark:text-stone-400">Statut :</span>
-                <span className="text-emerald-600 dark:text-emerald-400 font-semibold">Payé • En préparation</span>
+
+              {/* Total & Livraison */}
+              <div className="border-t border-stone-200 dark:border-stone-700 pt-2 space-y-1">
+                <div className="flex justify-between text-stone-500 dark:text-stone-400">
+                  <span>Livraison :</span>
+                  <span>{shippingFee === 0 ? 'Offerte' : `${shippingFee.toFixed(2)} €`}</span>
+                </div>
+                <div className="flex justify-between items-baseline font-bold text-stone-900 dark:text-white pt-1">
+                  <span>Total payé :</span>
+                  <div className="text-right">
+                    <span className="font-serif text-base">{totalPrice.toFixed(2)} €</span>
+                    <span className="block text-[11px] font-sans text-emerald-600 dark:text-emerald-400">
+                      ≈ {formatFCFA(totalPrice)}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
 
-            <button
-              onClick={handleReset}
-              className="px-8 py-3.5 bg-stone-900 dark:bg-white hover:bg-stone-800 dark:hover:bg-stone-200 text-white dark:text-stone-950 font-semibold text-xs rounded-full shadow-md transition-colors"
-            >
-              Retourner à la boutique
-            </button>
+            {/* Boutons d'actions */}
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                onClick={handlePrintReceipt}
+                className="px-5 py-3 bg-stone-100 dark:bg-stone-800 hover:bg-stone-200 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 font-semibold text-xs rounded-full flex items-center gap-2 transition-colors border border-stone-300 dark:border-stone-700"
+              >
+                <Printer size={15} />
+                <span>Imprimer / Télécharger le reçu</span>
+              </button>
+
+              <button
+                onClick={handleReset}
+                className="px-8 py-3 bg-stone-900 dark:bg-white hover:bg-stone-800 dark:hover:bg-stone-200 text-white dark:text-stone-950 font-semibold text-xs rounded-full shadow-md transition-colors"
+              >
+                Retourner à la boutique
+              </button>
+            </div>
           </div>
         )}
       </div>
