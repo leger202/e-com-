@@ -1,15 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, CheckCircle, CreditCard, ShieldCheck, Lock, Smartphone, Loader2, Info, Mail, Printer, FileText } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import { formatFCFA, triggerKkiapayPayment } from '../services/kkiapay';
 import { triggerFedaPayPayment } from '../services/fedapay';
 import { sendOrderConfirmationEmail } from '../services/emailService';
+
 export const CheckoutModal = ({ isOpen, onClose }) => {
   const { items, totalPrice, shippingFee, clearCart } = useCart();
 
   const [step, setStep] = useState('form'); // 'form' | 'processing' | 'success'
-  
-  const [paymentMethod, setPaymentMethod] = useState('fedapay');
+  const [paymentMethod, setPaymentMethod] = useState('fedapay'); // 'fedapay' | 'kkiapay' | 'card' | 'cod'
   const [isProcessing, setIsProcessing] = useState(false);
   const [kkiapayTxId, setKkiapayTxId] = useState('');
   const [confirmedItems, setConfirmedItems] = useState([]);
@@ -20,7 +20,7 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
     lastName: '',
     email: '',
     phone: '',
-    countryCode: '+229', // Bénin par défaut pour Kkiapay
+    countryCode: '+229', // Bénin par défaut
     address: '',
     city: 'Cotonou',
     cardNumber: '4242 •••• •••• 4242',
@@ -29,14 +29,28 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
   });
   const [orderId, setOrderId] = useState('');
 
+  // Réinitialise automatiquement le formulaire à chaque ouverture
+  useEffect(() => {
+    if (isOpen) {
+      setStep('form');
+      setIsProcessing(false);
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
-  const handleSuccessfulOrder = async (txId = null) => {
+  const handleSuccessfulOrder = async (txId = null, methodLabel = null) => {
     const randomOrderId = 'ATELIER-' + Math.floor(100000 + Math.random() * 900000);
     setOrderId(randomOrderId);
-    const finalTxId = txId || 'KKIA-' + Math.floor(100000 + Math.random() * 900000);
+    const finalTxId = txId || ((paymentMethod === 'fedapay' ? 'FEDA-' : paymentMethod === 'kkiapay' ? 'KKIA-' : 'CMD-') + Math.floor(100000 + Math.random() * 900000));
     setKkiapayTxId(finalTxId);
     setConfirmedItems([...items]);
+
+    const chosenMethod = methodLabel || (
+      paymentMethod === 'fedapay' ? 'FedaPay Mobile Money / Carte' :
+      paymentMethod === 'kkiapay' ? 'Kkiapay Mobile Money / Carte' :
+      paymentMethod === 'card' ? 'Carte Bancaire' : 'Paiement à la livraison'
+    );
 
     // Déclenchement de l'envoi d'e-mail de confirmation
     try {
@@ -47,7 +61,7 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
         totalPrice: totalPrice,
         shippingFee: shippingFee,
         paymentDetails: {
-          method: paymentMethod === 'kkiapay' ? 'Kkiapay Mobile Money / Carte' : 'Carte Bancaire',
+          method: chosenMethod,
           transactionId: finalTxId,
           amountXOF: formatFCFA(totalPrice)
         }
@@ -64,12 +78,29 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const fullPhone = `${formData.countryCode}${formData.phone.replace(/\s+/g, '')}`;
 
-    if (paymentMethod === 'kkiapay') {
+    if (paymentMethod === 'fedapay') {
       setIsProcessing(true);
       setStep('processing');
 
-      const fullPhone = `${formData.countryCode}${formData.phone.replace(/\s+/g, '')}`;
+      await triggerFedaPayPayment({
+        amountEur: totalPrice,
+        customerName: `${formData.firstName} ${formData.lastName}`,
+        customerEmail: formData.email,
+        customerPhone: fullPhone,
+        onSuccess: (data) => {
+          handleSuccessfulOrder(data.transactionId, 'FedaPay Mobile Money / Carte');
+        },
+        onFailure: (err) => {
+          setIsProcessing(false);
+          setStep('form');
+          alert("Le paiement FedaPay a été annulé ou interrompu. Vous pouvez réessayer.");
+        }
+      });
+    } else if (paymentMethod === 'kkiapay') {
+      setIsProcessing(true);
+      setStep('processing');
 
       await triggerKkiapayPayment({
         amountEur: totalPrice,
@@ -77,23 +108,32 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
         customerEmail: formData.email,
         customerPhone: fullPhone,
         onSuccess: (data) => {
-          handleSuccessfulOrder(data.transactionId);
+          handleSuccessfulOrder(data.transactionId, 'Kkiapay Mobile Money / Carte');
         },
         onFailure: (err) => {
           setIsProcessing(false);
           setStep('form');
-          alert("Le paiement Kkiapay n'a pas pu aboutir. Veuillez réessayer.");
+          alert("Le service Kkiapay est actuellement en maintenance. Veuillez sélectionner FedaPay ci-dessus.");
         }
       });
     } else {
-      // Carte ou autre
-      handleSuccessfulOrder();
+      // Carte ou à la livraison
+      handleSuccessfulOrder(null, paymentMethod === 'card' ? 'Carte Bancaire' : 'Paiement à la livraison');
     }
+  };
+
+  const handleClose = () => {
+    setStep('form');
+    setIsProcessing(false);
+    onClose();
   };
 
   const handleReset = () => {
     setStep('form');
     setIsProcessing(false);
+    setConfirmedItems([]);
+    setOrderId('');
+    setKkiapayTxId('');
     onClose();
   };
 
@@ -102,7 +142,10 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-stone-950/70 backdrop-blur-sm animate-fadeIn">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-stone-950/70 backdrop-blur-sm animate-fadeIn"
+      onClick={handleClose}
+    >
       <div
         className="relative bg-white dark:bg-stone-900 rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-stone-200 dark:border-stone-800 transition-colors"
         onClick={(e) => e.stopPropagation()}
@@ -116,8 +159,9 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
             </h2>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-2 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 hover:bg-stone-200/60 dark:hover:bg-stone-800 rounded-full transition-colors"
+            title="Fermer"
           >
             <X size={20} />
           </button>
@@ -145,7 +189,7 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
             {/* Contact details */}
             <div>
               <h3 className="text-xs font-bold uppercase tracking-wider text-stone-900 dark:text-white mb-3">
-                1. Vos coordonnées & Envoi du reçu
+                1. Vos Coordonnées
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -171,12 +215,7 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
                   />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="block text-[11px] font-semibold text-stone-600 dark:text-stone-300 mb-1 flex items-center justify-between">
-                    <span>Email pour recevoir la confirmation d'achat *</span>
-                    <span className="text-rose-600 dark:text-rose-400 text-[10px] font-normal flex items-center gap-1">
-                      <Mail size={12} /> E-mail avec récapitulatif des articles
-                    </span>
-                  </label>
+                  <label className="block text-[11px] font-semibold text-stone-600 dark:text-stone-300 mb-1">Adresse e-mail (reçu de commande) *</label>
                   <input
                     type="email"
                     required
@@ -241,30 +280,51 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
                   3. Mode de paiement
                 </h3>
                 <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
-                  <ShieldCheck size={14} /> Sécurisé par Kkiapay
+                  <ShieldCheck size={14} /> Sécurisé par FedaPay & Kkiapay
                 </span>
               </div>
 
               {/* Selector */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                {/* Option FedaPay (Actif & Recommandé) */}
                 <button
                   type="button"
-                  onClick={() => setPaymentMethod('kkiapay')}
+                  onClick={() => setPaymentMethod('fedapay')}
                   className={`p-3 rounded-2xl border text-xs font-bold text-left transition-all ${
-                    paymentMethod === 'kkiapay'
+                    paymentMethod === 'fedapay'
                       ? 'border-emerald-600 bg-emerald-50/80 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200 ring-2 ring-emerald-500'
                       : 'border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 text-stone-700 dark:text-stone-300 hover:border-stone-300'
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1">
-                    <span className="font-serif text-sm">Kkiapay</span>
-                    <span className="text-[10px] bg-emerald-600 text-white px-1.5 py-0.5 rounded font-sans">Recommandé</span>
+                    <span className="font-serif text-sm">FedaPay</span>
+                    <span className="text-[9px] bg-emerald-600 text-white px-1.5 py-0.5 rounded font-sans font-semibold">Actif</span>
                   </div>
                   <p className="text-[10px] font-normal text-stone-500 dark:text-stone-400 leading-tight">
-                    Mobile Money & Carte
+                    MoMo, Moov, Celtiis, CB
                   </p>
                 </button>
 
+                {/* Option Kkiapay */}
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('kkiapay')}
+                  className={`p-3 rounded-2xl border text-xs font-bold text-left transition-all ${
+                    paymentMethod === 'kkiapay'
+                      ? 'border-amber-600 bg-amber-50/80 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 ring-2 ring-amber-500'
+                      : 'border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 text-stone-700 dark:text-stone-300 hover:border-stone-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-serif text-sm">Kkiapay</span>
+                    <span className="text-[9px] bg-amber-500 text-white px-1 py-0.5 rounded font-sans">Maintenance</span>
+                  </div>
+                  <p className="text-[10px] font-normal text-stone-500 dark:text-stone-400 leading-tight">
+                    Mobile Money / CB
+                  </p>
+                </button>
+
+                {/* Option Carte Bancaire */}
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('card')}
@@ -278,14 +338,15 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
                     <span>Carte Bancaire</span>
                   </div>
                   <p className="text-[10px] font-normal opacity-80 leading-tight">
-                    Visa / Mastercard directe
+                    Visa / Mastercard
                   </p>
                 </button>
 
+                {/* Option Paiement à la livraison */}
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('cod')}
-                  className={`p-3 rounded-2xl border text-xs font-bold text-left transition-all col-span-2 sm:col-span-1 ${
+                  className={`p-3 rounded-2xl border text-xs font-bold text-left transition-all ${
                     paymentMethod === 'cod'
                       ? 'border-stone-900 dark:border-white bg-stone-900 dark:bg-white text-white dark:text-stone-950'
                       : 'border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 text-stone-700 dark:text-stone-300'
@@ -295,20 +356,79 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
                     <span>À la livraison</span>
                   </div>
                   <p className="text-[10px] font-normal opacity-80 leading-tight">
-                    Paiement en espèces
+                    Paiement espèces
                   </p>
                 </button>
               </div>
 
-              {/* Kkiapay details panel */}
-              {paymentMethod === 'kkiapay' && (
+              {/* FedaPay details panel */}
+              {paymentMethod === 'fedapay' && (
                 <div className="p-4 bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/60 rounded-2xl space-y-3">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-semibold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
                       <Smartphone size={16} className="text-emerald-600 dark:text-emerald-400" />
-                      Réseaux acceptés par Kkiapay :
+                      Réseaux acceptés par FedaPay :
                     </span>
                     <span className="text-[11px] text-emerald-700 dark:text-emerald-300 font-mono font-bold">
+                      {formatFCFA(totalPrice)}
+                    </span>
+                  </div>
+
+                  {/* Operator Badges */}
+                  <div className="flex flex-wrap gap-1.5 text-[10px] font-bold">
+                    <span className="bg-amber-400 text-stone-950 px-2.5 py-1 rounded-full shadow-xs">
+                      🟡 MTN MoMo Bénin
+                    </span>
+                    <span className="bg-blue-600 text-white px-2.5 py-1 rounded-full shadow-xs">
+                      🔵 Moov Money Bénin
+                    </span>
+                    <span className="bg-purple-600 text-white px-2.5 py-1 rounded-full shadow-xs">
+                      🟣 Celtiis Cash Bénin
+                    </span>
+                    <span className="bg-stone-800 text-white px-2.5 py-1 rounded-full shadow-xs">
+                      💳 Visa / Mastercard
+                    </span>
+                  </div>
+
+                  {/* Phone number input for Mobile Money */}
+                  <div className="pt-1">
+                    <label className="block text-[11px] font-semibold text-stone-700 dark:text-stone-300 mb-1">
+                      Numéro de téléphone / Mobile Money *
+                    </label>
+                    <div className="flex gap-2">
+                      <span className="px-3 py-2.5 bg-stone-100 dark:bg-stone-800 border border-stone-300 dark:border-stone-700 rounded-xl text-xs font-semibold text-stone-700 dark:text-stone-300 flex items-center">
+                        {formData.countryCode}
+                      </span>
+                      <input
+                        type="tel"
+                        required
+                        placeholder="61 00 00 00"
+                        value={formData.phone}
+                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                        className="flex-1 text-xs bg-white dark:bg-stone-800 border border-stone-300 dark:border-stone-700 text-stone-900 dark:text-white rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-600"
+                      />
+                    </div>
+                    <p className="text-[10px] text-stone-500 dark:text-stone-400 mt-1 flex items-center gap-1">
+                      <Info size={12} className="text-emerald-600" />
+                      FedaPay ouvrira une boîte de dialogue sécurisée pour valider votre paiement Mobile Money ou Carte.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Kkiapay details panel */}
+              {paymentMethod === 'kkiapay' && (
+                <div className="p-4 bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/60 rounded-2xl space-y-3">
+                  <div className="p-2.5 bg-amber-100 dark:bg-amber-900/40 rounded-xl text-[11px] text-amber-800 dark:text-amber-200">
+                    ⚠️ <strong>Information Kkiapay :</strong> Des ralentissements ou une maintenance peuvent impacter Kkiapay. Si la validation échoue, vous pouvez basculer sur <strong>FedaPay</strong> ci-dessus.
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                      <Smartphone size={16} className="text-amber-600 dark:text-amber-400" />
+                      Réseaux Kkiapay :
+                    </span>
+                    <span className="text-[11px] text-amber-700 dark:text-amber-300 font-mono font-bold">
                       {formatFCFA(totalPrice)}
                     </span>
                   </div>
@@ -332,7 +452,7 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
                   {/* Phone number input for Mobile Money */}
                   <div className="pt-1">
                     <label className="block text-[11px] font-semibold text-stone-700 dark:text-stone-300 mb-1">
-                      Numéro Mobile Money pour la confirmation *
+                      Numéro Mobile Money *
                     </label>
                     <div className="flex gap-2">
                       <span className="px-3 py-2.5 bg-stone-100 dark:bg-stone-800 border border-stone-300 dark:border-stone-700 rounded-xl text-xs font-semibold text-stone-700 dark:text-stone-300 flex items-center">
@@ -344,13 +464,9 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
                         placeholder="61 00 00 00"
                         value={formData.phone}
                         onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                        className="flex-1 text-xs bg-white dark:bg-stone-800 border border-stone-300 dark:border-stone-700 text-stone-900 dark:text-white rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-600"
+                        className="flex-1 text-xs bg-white dark:bg-stone-800 border border-stone-300 dark:border-stone-700 text-stone-900 dark:text-white rounded-xl px-3 py-2.5 focus:outline-none focus:border-amber-600"
                       />
                     </div>
-                    <p className="text-[10px] text-stone-500 dark:text-stone-400 mt-1 flex items-center gap-1">
-                      <Info size={12} className="text-emerald-600" />
-                      Une notification de validation de débit USSD vous sera envoyée sur ce numéro.
-                    </p>
                   </div>
                 </div>
               )}
@@ -396,13 +512,17 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
               <button
                 type="submit"
                 className={`w-full py-4 text-white font-semibold text-sm rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 ${
-                  paymentMethod === 'kkiapay'
+                  paymentMethod === 'fedapay'
                     ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : paymentMethod === 'kkiapay'
+                    ? 'bg-amber-600 hover:bg-amber-700'
                     : 'bg-stone-950 dark:bg-white hover:bg-stone-800 dark:hover:bg-stone-200 text-white dark:text-stone-950'
                 }`}
               >
                 <span>
-                  {paymentMethod === 'kkiapay'
+                  {paymentMethod === 'fedapay'
+                    ? `Payer ${formatFCFA(totalPrice)} avec FedaPay (MoMo/CB)`
+                    : paymentMethod === 'kkiapay'
                     ? `Payer ${formatFCFA(totalPrice)} avec Kkiapay`
                     : `Valider la commande • ${totalPrice.toFixed(2)} €`}
                 </span>
@@ -423,7 +543,11 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
               <Loader2 size={40} className="animate-spin" />
             </div>
             <h3 className="font-serif text-2xl font-bold text-stone-900 dark:text-white mb-2">
-              Connexion à Kkiapay en cours...
+              {paymentMethod === 'fedapay'
+                ? 'Connexion sécurisée à FedaPay en cours...'
+                : paymentMethod === 'kkiapay'
+                ? 'Connexion sécurisée à Kkiapay en cours...'
+                : 'Validation de la commande en cours...'}
             </h3>
             <p className="text-stone-600 dark:text-stone-300 text-sm max-w-sm mb-4">
               Veuillez confirmer l'autorisation de débit sur votre téléphone Mobile Money ({formData.countryCode} {formData.phone}).
@@ -463,7 +587,7 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
 
               {kkiapayTxId && (
                 <div className="flex justify-between border-b border-stone-200 dark:border-stone-700 pb-2">
-                  <span className="text-stone-500 dark:text-stone-400">Réf. Transaction Kkiapay :</span>
+                  <span className="text-stone-500 dark:text-stone-400">Réf. Transaction :</span>
                   <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{kkiapayTxId}</span>
                 </div>
               )}
@@ -525,7 +649,7 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
                 onClick={handleReset}
                 className="px-8 py-3 bg-stone-900 dark:bg-white hover:bg-stone-800 dark:hover:bg-stone-200 text-white dark:text-stone-950 font-semibold text-xs rounded-full shadow-md transition-colors"
               >
-                Retourner à la boutique
+                Nouvelle commande / Retourner à la boutique
               </button>
             </div>
           </div>
