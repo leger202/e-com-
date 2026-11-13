@@ -8,7 +8,7 @@ export const CheckoutModal = ({ isOpen, onClose }) => {
   const { items, totalPrice, shippingFee, clearCart } = useCart();
 
   const [step, setStep] = useState('form'); // 'form' | 'processing' | 'success'
-  const [paymentMethod, setPaymentMethod] = useState('kkiapay'); // 'kkiapay' | 'card' | 'cod'
+  
   const [paymentMethod, setPaymentMethod] = useState('fedapay');
   const [isProcessing, setIsProcessing] = useState(false);
   const [kkiapayTxId, setKkiapayTxId] = useState('');
