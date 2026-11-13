@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { X, CheckCircle, CreditCard, ShieldCheck, Lock, Smartphone, Loader2, Info, Mail, Printer, FileText } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import { formatFCFA, triggerKkiapayPayment } from '../services/kkiapay';
+import { triggerFedaPayPayment } from '../services/fedapay';
 import { sendOrderConfirmationEmail } from '../services/emailService';
-
 export const CheckoutModal = ({ isOpen, onClose }) => {
   const { items, totalPrice, shippingFee, clearCart } = useCart();
 
